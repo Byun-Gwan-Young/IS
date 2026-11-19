@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { filterCommunityIdeas } from "../lib/community-utils";
-import { extractDocumentText, identifyDocument, validateDocxContainer } from "../lib/server/documents";
+import { extractDocumentText, identifyDocument, readMultipartDocument, validateDocxContainer } from "../lib/server/documents";
 import { buildGithubSearchQuery, mapGithubRepository, mapGithubSearchResponse } from "../lib/server/github";
 import { communityIdeaInputSchema, repositorySearchSchema } from "../lib/contracts";
 
@@ -19,6 +19,16 @@ test("rejects invalid DOCX containers and extracts UTF-8 text", async () => {
   const extracted = await extractDocumentText("txt", Buffer.from("A service for students who need a faster way to review lecture notes.", "utf8"));
   assert.match(extracted.text, /students/);
   assert.equal(extracted.truncated, false);
+});
+
+test("reads exactly one streamed multipart document file", async () => {
+  const form = new FormData();
+  form.set("file", new Blob(["A text document for validating streamed multipart upload parsing."], { type: "text/plain" }), "idea.txt");
+  const request = new Request("https://example.test/api/documents/extract", { method: "POST", body: form });
+  const uploaded = await readMultipartDocument(request);
+
+  assert.equal(uploaded.name, "idea.txt");
+  assert.match(uploaded.buffer.toString("utf8"), /multipart upload/);
 });
 
 test("builds bounded GitHub Repository Search API filters", () => {

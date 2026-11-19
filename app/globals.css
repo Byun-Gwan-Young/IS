@@ -468,6 +468,7 @@ textarea.form-control { min-height: 127px; resize: vertical; line-height: 1.65; 
 .community-mode-banner { display: flex; align-items: center; gap: 10px; margin-bottom: 17px; padding: 13px 14px; color: var(--success); background: var(--success-soft); border: 1px solid color-mix(in srgb, var(--success) 17%, var(--border)); border-radius: 13px; }
 .community-mode-banner > svg { width: 18px; height: 18px; flex: 0 0 18px; }
 .community-mode-banner > div { display: grid; flex: 1; gap: 3px; }
+.community-mode-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .community-mode-banner strong { font-size: 11px; }
 .community-mode-banner span { color: var(--muted); font-size: 10px; line-height: 1.5; }
 .community-mode-banner.is-demo { color: var(--warning); background: var(--warning-soft); border-color: color-mix(in srgb, var(--warning) 18%, var(--border)); }
@@ -686,6 +687,7 @@ textarea.form-control { min-height: 127px; resize: vertical; line-height: 1.65; 
   .community-form-footer > .button { width: 100%; }
   .community-ai-grid { grid-template-columns: 1fr; }
   .community-mode-banner { align-items: flex-start; }
+  .community-mode-actions { flex-direction: column; }
   .notice-toast { right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); }
 }
 

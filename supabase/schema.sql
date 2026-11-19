@@ -37,6 +37,39 @@ create table if not exists public.ideas (
 
 alter table public.ideas add column if not exists refined_feature text not null default '';
 
+create or replace function public.enforce_idea_post_cooldown()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public, auth
+as $$
+begin
+  if auth.uid() is null or new.user_id <> auth.uid() then
+    raise exception 'Idea owner must match the signed-in user' using errcode = '42501';
+  end if;
+
+  new.created_at := clock_timestamp();
+  perform pg_advisory_xact_lock(hashtext(new.user_id::text));
+
+  if exists (
+    select 1
+    from public.ideas as previous
+    where previous.user_id = new.user_id
+      and previous.created_at > clock_timestamp() - interval '30 seconds'
+  ) then
+    raise exception 'Please wait before creating another idea' using errcode = 'P0001';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.enforce_idea_post_cooldown() from public, anon, authenticated;
+drop trigger if exists ideas_post_cooldown on public.ideas;
+create trigger ideas_post_cooldown
+  before insert on public.ideas
+  for each row execute function public.enforce_idea_post_cooldown();
+
 create index if not exists ideas_public_created_idx on public.ideas (is_public, created_at desc);
 create index if not exists ideas_public_category_created_idx on public.ideas (category_id, created_at desc) where is_public;
 

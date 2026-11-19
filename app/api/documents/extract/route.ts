@@ -1,10 +1,7 @@
-import busboy from "busboy";
-import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
-import type { IncomingHttpHeaders } from "node:http";
 import { documentIdeaSchema } from "@/lib/contracts";
 import { AnalysisError } from "@/lib/server/errors";
-import { extractDocumentText, identifyDocument, MAX_DOCUMENT_BYTES } from "@/lib/server/documents";
+import { DocumentUploadError, extractDocumentText, identifyDocument, MAX_DOCUMENT_BYTES, readMultipartDocument } from "@/lib/server/documents";
 import { callLlm } from "@/lib/server/llm";
 import { readJsonObject } from "@/lib/server/json";
 
@@ -29,52 +26,6 @@ function error(message: string, status: number) {
   return NextResponse.json({ message }, { status });
 }
 
-async function readUploadedFile(request: Request) {
-  if (!request.body) throw new Error("업로드 본문이 비어 있습니다.");
-  const contentType = request.headers.get("content-type") || "";
-  if (!contentType.toLowerCase().startsWith("multipart/form-data;")) throw new Error("multipart/form-data 형식으로 파일을 보내 주세요.");
-
-  const parser = busboy({
-    headers: Object.fromEntries(request.headers.entries()) as IncomingHttpHeaders,
-    preservePath: false,
-    limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1, fields: 0, parts: 1, headerPairs: 100 },
-  });
-  const chunks: Buffer[] = [];
-  let fileName = "";
-  let fileCount = 0;
-  let tooLarge = false;
-  let invalidPart = false;
-
-  await new Promise<void>((resolve, reject) => {
-    parser.on("file", (field, stream, info) => {
-      fileCount += 1;
-      if (fileCount > 1 || field !== "file") invalidPart = true;
-      fileName = info.filename || "";
-      stream.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
-      stream.on("limit", () => { tooLarge = true; });
-      stream.on("error", reject);
-    });
-    parser.on("field", () => { invalidPart = true; });
-    parser.on("filesLimit", () => { invalidPart = true; });
-    parser.on("partsLimit", () => { invalidPart = true; });
-    parser.on("error", reject);
-    parser.on("close", resolve);
-
-    const source = Readable.fromWeb(request.body as never);
-    request.signal.addEventListener("abort", () => {
-      source.destroy(new Error("업로드가 취소되었습니다."));
-      parser.destroy();
-      reject(new Error("업로드가 취소되었습니다."));
-    }, { once: true });
-    source.on("error", reject);
-    source.pipe(parser);
-  });
-
-  if (tooLarge) throw new Error("파일은 10MB 이하로 업로드해 주세요.");
-  if (invalidPart || fileCount !== 1 || !fileName) throw new Error("파일 하나만 'file' 항목으로 업로드해 주세요.");
-  return { name: fileName, buffer: Buffer.concat(chunks) };
-}
-
 export async function POST(request: Request) {
   const address = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
   if (limited(address)) return error("문서 추출 요청이 잠시 많습니다. 1분 뒤 다시 시도해 주세요.", 429);
@@ -83,10 +34,10 @@ export async function POST(request: Request) {
   if (contentLength > MAX_DOCUMENT_BYTES + 64 * 1024) return error("파일은 10MB 이하로 업로드해 주세요.", 413);
   let upload: { name: string; buffer: Buffer };
   try {
-    upload = await readUploadedFile(request);
+    upload = await readMultipartDocument(request);
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "업로드 내용을 읽지 못했습니다.";
-    return error(message, message.includes("10MB") ? 413 : 400);
+    return error(message, cause instanceof DocumentUploadError ? cause.status : 400);
   }
   if (upload.buffer.length === 0) return error("선택한 파일이 비어 있습니다.", 400);
 

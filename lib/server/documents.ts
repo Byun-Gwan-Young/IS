@@ -1,10 +1,82 @@
 import mammoth from "mammoth";
+import busboy from "busboy";
+import { Readable } from "node:stream";
+import type { IncomingHttpHeaders } from "node:http";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { PDFParse } from "pdf-parse";
 
 export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_EXTRACTED_CHARACTERS = 24_000;
 
 type DocumentKind = "pdf" | "docx" | "txt" | "md";
+
+export class DocumentUploadError extends Error {
+  status: number;
+
+  constructor(message: string, status = 400) {
+    super(message);
+    this.name = "DocumentUploadError";
+    this.status = status;
+  }
+}
+
+export async function readMultipartDocument(request: Request) {
+  if (!request.body) throw new DocumentUploadError("업로드 본문이 비어 있습니다.");
+  const contentType = request.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().startsWith("multipart/form-data;")) {
+    throw new DocumentUploadError("multipart/form-data 형식으로 파일을 보내 주세요.");
+  }
+
+  let parser: ReturnType<typeof busboy>;
+  try {
+    parser = busboy({
+      headers: Object.fromEntries(request.headers.entries()) as IncomingHttpHeaders,
+      preservePath: false,
+      limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1, fields: 2, parts: 3, headerPairs: 100 },
+    });
+  } catch {
+    throw new DocumentUploadError("업로드 헤더나 파일 이름이 올바르지 않습니다.");
+  }
+
+  const chunks: Buffer[] = [];
+  let fileName = "";
+  let fileCount = 0;
+  let tooLarge = false;
+  let invalidPart = false;
+
+  await new Promise<void>((resolve, reject) => {
+    parser.on("file", (field, stream, info) => {
+      fileCount += 1;
+      if (fileCount > 1 || field !== "file") invalidPart = true;
+      fileName = info.filename || "";
+      stream.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      stream.on("limit", () => { tooLarge = true; });
+      stream.on("error", reject);
+    });
+    parser.on("field", () => { invalidPart = true; });
+    parser.on("filesLimit", () => { invalidPart = true; });
+    parser.on("partsLimit", () => { invalidPart = true; });
+    parser.on("error", reject);
+    parser.on("close", resolve);
+
+    const source = Readable.fromWeb(request.body as unknown as NodeReadableStream);
+    request.signal.addEventListener("abort", () => {
+      source.destroy(new Error("업로드가 취소되었습니다."));
+      parser.destroy();
+      reject(new Error("업로드가 취소되었습니다."));
+    }, { once: true });
+    source.on("error", reject);
+    source.pipe(parser);
+  });
+
+  if (tooLarge) throw new DocumentUploadError("파일은 10MB 이하로 업로드해 주세요.", 413);
+  if (invalidPart || fileCount !== 1 || !fileName) {
+    throw new DocumentUploadError("파일 하나만 'file' 항목으로 업로드해 주세요.");
+  }
+  const buffer = Buffer.concat(chunks);
+  if (buffer.length === 0) throw new DocumentUploadError("선택한 파일이 비어 있습니다.");
+  return { name: fileName, buffer };
+}
 
 function findZipDirectory(buffer: Buffer) {
   const lowerBound = Math.max(0, buffer.length - 65_557);

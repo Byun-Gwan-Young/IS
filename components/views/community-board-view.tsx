@@ -230,7 +230,10 @@ export function CommunityBoardView({ onAnalyze }: { onAnalyze: (idea: IdeaReques
     if (!currentUserId) {
       const { data, error } = await client.auth.signInAnonymously();
       if (error || !data.user) {
-        setClientError("공유 게시판에 연결하지 못했습니다. Supabase에서 Anonymous Sign-Ins를 켜고 anon 키와 RLS 설정을 확인해 주세요.");
+        const message = error?.code === "anonymous_provider_disabled"
+          ? "Supabase에서 Anonymous Sign-Ins를 켜야 공유 게시판을 사용할 수 있습니다."
+          : "공유 게시판에 연결하지 못했습니다. Supabase URL·anon 키와 Anonymous Sign-Ins 설정을 확인해 주세요.";
+        setClientError(message);
         setMode("error");
         return;
       }
@@ -238,6 +241,20 @@ export function CommunityBoardView({ onAnalyze }: { onAnalyze: (idea: IdeaReques
     }
     setUserId(currentUserId);
     await loadShared(client, currentUserId);
+  }
+
+  function continueInDemoMode() {
+    try {
+      let ownerKey = localStorage.getItem(OWNER_KEY);
+      if (!ownerKey) {
+        ownerKey = crypto.randomUUID();
+        localStorage.setItem(OWNER_KEY, ownerKey);
+      }
+      setClientError("");
+      loadDemo(ownerKey);
+    } catch {
+      setClientError("브라우저 저장 공간을 사용할 수 없어 시연 모드로 전환하지 못했습니다.");
+    }
   }
 
   useEffect(() => {
@@ -312,7 +329,7 @@ export function CommunityBoardView({ onAnalyze }: { onAnalyze: (idea: IdeaReques
             "Content-Type": "application/json",
             ...(currentSession.session?.access_token ? { Authorization: `Bearer ${currentSession.session.access_token}` } : {}),
           },
-          body: JSON.stringify({ idea: parsedInput.data, existingPublicIdeas }),
+          body: JSON.stringify({ idea: parsedInput.data, existingPublicIdeas, storageMode: mode === "shared" ? "shared" : "demo" }),
         });
         const payload: unknown = await response.json().catch(() => null);
         if (!response.ok) {
@@ -443,7 +460,7 @@ export function CommunityBoardView({ onAnalyze }: { onAnalyze: (idea: IdeaReques
             : mode === "error"
               ? clientError || "공유 게시판 설정을 확인해 주세요."
               : "게시판 저장소를 연결하고 있습니다."}</span></div>
-        {mode === "error" && <Button variant="secondary" size="sm" onClick={() => void connect()}>다시 연결</Button>}
+        {mode === "error" && <div className="community-mode-actions"><Button variant="secondary" size="sm" onClick={() => void connect()}>다시 연결</Button><Button variant="secondary" size="sm" onClick={continueInDemoMode}>로컬 시연 모드로 열기</Button></div>}
       </div>
 
       {clientError && mode !== "error" && <div className="form-error" role="status"><CircleHelp aria-hidden="true" />{clientError}</div>}

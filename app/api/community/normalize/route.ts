@@ -11,6 +11,7 @@ export const maxDuration = 30;
 const normalizeRequestSchema = z.object({
   idea: communityIdeaInputSchema,
   existingPublicIdeas: z.array(z.object({ id: z.string().max(100), title: z.string().max(100), discomfort: z.string().max(300), requestedFeature: z.string().max(300) })).max(20).default([]),
+  storageMode: z.enum(["shared", "demo"]).default("shared"),
 });
 
 const requestWindows = new Map<string, { count: number; resetAt: number }>();
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
   let existingPublicIdeas = validated.data.existingPublicIdeas;
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
-  if (supabaseUrl && supabaseAnonKey) {
+  if (validated.data.storageMode === "shared" && supabaseUrl && supabaseAnonKey) {
     const authorization = request.headers.get("authorization") || "";
     if (!authorization.startsWith("Bearer ")) {
       return NextResponse.json({ message: "공유 게시판 세션을 확인하지 못했습니다. 다시 연결해 주세요." }, { status: 401 });
@@ -72,6 +73,8 @@ export async function POST(request: Request) {
     } catch {
       return NextResponse.json({ message: "Supabase 공개 제안을 확인하지 못했습니다. 네트워크를 확인해 주세요." }, { status: 502 });
     }
+  } else if (validated.data.storageMode === "shared" && (supabaseUrl || supabaseAnonKey)) {
+    return NextResponse.json({ message: "Supabase URL과 공개 anon 키를 함께 설정해 주세요." }, { status: 503 });
   }
 
   try {
